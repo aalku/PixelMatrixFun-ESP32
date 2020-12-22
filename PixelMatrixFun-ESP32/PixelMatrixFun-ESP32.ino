@@ -22,6 +22,9 @@ uint8_t txValue[7] = "HELO\r\n";
 // How many leds in your strip?
 #define NUM_LEDS 256
 
+//Really dark colors are shown much lighter so we better put them black.
+#define MIN_BRIGHTNESS 30
+
 // For led chips like Neopixels, which have a data line, ground, and power, you just
 // need to define DATA_PIN.  For led chipsets that are SPI based (four wires - data, clock,
 // ground, and power), like the LPD8806, define both DATA_PIN and CLOCK_PIN
@@ -62,9 +65,17 @@ void drawFromFlash() {
       } else {
         pixPos = x*16+(15-y);
       }
-      leds[pixPos].g = r;
-      leds[pixPos].r = g;
-      leds[pixPos].b = b;
+
+      // Make dark color darker by squaring them as decimal part.
+      r = r*r/255;
+      g = g*g/255;
+      b = b*b/255;
+      
+      if ((r+g+b)/3 < MIN_BRIGHTNESS) {
+        leds[pixPos] = CRGB(0, 0, 0); //Really dark colors are shown much lighter so we better put them black.
+      } else {
+        leds[pixPos] = CRGB(r, g, b);
+      }
     }
   }
   Serial.println("drawing!!!");
@@ -105,8 +116,9 @@ void setup() {
     Serial.println("failed to initialise EEPROM"); delay(1000000);
   }
 
-	LEDS.addLeds<WS2812B,DATA_PIN,RGB>(leds,NUM_LEDS);
-	LEDS.setBrightness(16);
+	LEDS.addLeds<WS2812B,DATA_PIN,GRB>(leds,NUM_LEDS);
+  LEDS.setBrightness(10);
+  FastLED.setCorrection(CRGB(240,200,255));
 
   drawFromFlash();
 
