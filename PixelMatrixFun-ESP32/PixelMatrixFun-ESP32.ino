@@ -15,9 +15,9 @@ bool deviceConnected = false;
 bool oldDeviceConnected = false;
 uint8_t txValue[7] = "HELO\r\n";
 
-#define SERVICE_UUID           "6ff4913c-ea8a-4e5b-afdc-9f0f0e488ab1"
-#define CHARACTERISTIC_UUID_RX "6ff4913c-ea8a-4e5b-afdc-9f0f0e488ab2"
-#define CHARACTERISTIC_UUID_TX "6ff4913c-ea8a-4e5b-afdc-9f0f0e488ab3"
+#define SERVICE_UUID                   "6ff4913c-ea8a-4e5b-afdc-9f0f0e488ab1"
+#define CHARACTERISTIC_UUID_RGB_BITMAP "6ff4913c-ea8a-4e5b-afdc-9f0f0e488ab2"
+#define CHARACTERISTIC_UUID_HELO       "6ff4913c-ea8a-4e5b-afdc-9f0f0e488ab3"
 
 // How many leds in your strip?
 #define NUM_LEDS 256
@@ -129,26 +129,7 @@ void setup() {
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
 
-  // Create the BLE Service
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-
-  // Create a BLE Characteristic
-  pTxCharacteristic = pService->createCharacteristic(
-                   CHARACTERISTIC_UUID_TX,
-                    BLECharacteristic::PROPERTY_NOTIFY
-                  );
-                      
-  pTxCharacteristic->addDescriptor(new BLE2902());
-
-  BLECharacteristic * pRxCharacteristic = pService->createCharacteristic(
-                       CHARACTERISTIC_UUID_RX,
-                      BLECharacteristic::PROPERTY_WRITE
-                    );
-
-  pRxCharacteristic->setCallbacks(new MyCallbacks());
-
-  // Start the service
-  pService->start();
+  startService();
 
   // Start advertising
   pServer->getAdvertising()->start();
@@ -157,31 +138,70 @@ void setup() {
 
 }
 
-void fadeall() { for(int i = 0; i < NUM_LEDS; i++) { leds[i].nscale8(250); } }
+void startService() {
+  Serial.println("startService()");
+    // Create the BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic
+  pTxCharacteristic = pService->createCharacteristic(
+                   CHARACTERISTIC_UUID_HELO,
+                    BLECharacteristic::PROPERTY_NOTIFY
+                  );
+                      
+  pTxCharacteristic->addDescriptor(new BLE2902());
+
+  BLECharacteristic * pRxCharacteristic = pService->createCharacteristic(
+                       CHARACTERISTIC_UUID_RGB_BITMAP,
+                      BLECharacteristic::PROPERTY_WRITE
+                    );
+
+  pRxCharacteristic->setCallbacks(new MyCallbacks());
+
+  // Start the service
+  pService->start();
+}
+
+void stopService() {
+  Serial.println("stopService()");
+  BLEService *pService = pServer->getServiceByUUID(SERVICE_UUID);
+  if (pService != 0) {
+    pService->stop();
+  }
+}
 
 unsigned int count = 0;
 
-void handleBLE() {
-    if (deviceConnected && (count++ % 100) == 0) {
-        pTxCharacteristic->setValue(txValue, 6);
-        pTxCharacteristic->notify();
-        delay(10); // bluetooth stack will go into congestion, if too many packets are sent
-  }
+unsigned long nextHelo = 0;
+const unsigned long heloEvery = 2 * 1000;
 
+void handleBLE() {
     // disconnecting
     if (!deviceConnected && oldDeviceConnected) {
         delay(500); // give the bluetooth stack the chance to get things ready
+        stopService();
+        delay(500); // give the bluetooth stack the chance to get things ready
+        startService();
+        delay(500); // give the bluetooth stack the chance to get things ready
         pServer->startAdvertising(); // restart advertising
         Serial.println("start advertising");
-        oldDeviceConnected = deviceConnected;
     }
     // connecting
     if (deviceConnected && !oldDeviceConnected) {
     // do stuff here on connecting
-        oldDeviceConnected = deviceConnected;
     }
+    oldDeviceConnected = deviceConnected;
 }
 
 void loop() {
+  count++;
+  if (deviceConnected && (count % 100) == 0) {
+    long t0 = millis();
+    if (t0 > nextHelo) {
+      pTxCharacteristic->setValue(txValue, 6);
+      pTxCharacteristic->notify();
+      nextHelo = millis() + heloEvery;
+    }
+  }
   handleBLE();
 }
