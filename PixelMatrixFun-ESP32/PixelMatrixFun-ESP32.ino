@@ -14,7 +14,6 @@ BLECharacteristic * pTxCharacteristic;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 uint8_t txValue[7] = "HELO\r\n";
-int lastClearSeq = -1;
 
 #define SERVICE_UUID                    "5e92c674-3f45-420c-bb53-af2bcaff68b2"
 #define CHARACTERISTIC_UUID_RGB_BITMAP  "2de8d042-9a37-45f0-8233-5160faea472d"
@@ -49,11 +48,6 @@ class MyServerCallbacks: public BLEServerCallbacks {
     }
 };
 
-unsigned long lastReceiveMillis = 0;
-unsigned long receiveOffset = 0;
-const unsigned long resetReceiveMillis = 5000;
-
-
 void drawFromFlash() {
   Serial.println("drawing...");
   for (int x = 0; x < 16; x++) {
@@ -87,32 +81,42 @@ void drawFromFlash() {
 
 
 class BitmapWriteCallback: public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *pCharacteristic) {
-      std::string rxValue = pCharacteristic->getValue();
-      if (rxValue.length() > 0) {
-        if (millis() - lastReceiveMillis > resetReceiveMillis) {
-          receiveOffset = 0;
-        }
-        lastReceiveMillis = millis();
-        
-        for (int i = 0; i < rxValue.length(); i++) {
-          unsigned char v = rxValue[i];
-          EEPROM.write(receiveOffset+i, v);
-          Serial.print("[");Serial.print(receiveOffset+i);Serial.print("]=");Serial.println(v);
-        }
-        EEPROM.commit();
-        receiveOffset += rxValue.length();
-        Serial.println(".");
+  int seq = -1;
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    std::string rxValue = pCharacteristic->getValue();
+    /*
+     * 1 seq
+     * 2 msglen
+     * 2 offset
+     * data...
+     */
+    const int hlen = 5;
+    if (rxValue.length() > hlen) {
+      unsigned char s = rxValue[0];
+      if (s == seq) {
+        Serial.println("Repeated msg received: bitmap");
+        return;
       }
-      Serial.print("receiveOffset=");Serial.println(receiveOffset);
-      if (receiveOffset >= 16*16*3) {
+      seq = s;
+      unsigned int msglen = rxValue[1]*256+rxValue[2];
+      unsigned int offset = rxValue[3]*256+rxValue[4];
+      unsigned int plen = rxValue.length() - hlen;
+      for (int i = 0; i < plen; i++) {
+        unsigned char v = rxValue[i+hlen];
+        EEPROM.write(offset+i, v);
+        Serial.print("[");Serial.print(offset+i);Serial.print("]=");Serial.println(v);
+      }
+      EEPROM.commit();
+      Serial.println(".");
+      if (offset+plen==msglen) {
         drawFromFlash();
-        receiveOffset=0;
       }
     }
+  }
 };
 
 class PixelWriteCallback: public BLECharacteristicCallbacks {
+  // TODO seq
     void onWrite(BLECharacteristic *pCharacteristic) {
       std::string rxValue = pCharacteristic->getValue();
       if (rxValue.length() > 0) {
@@ -134,34 +138,35 @@ class PixelWriteCallback: public BLECharacteristicCallbacks {
 };
 
 class ClearCallback: public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *pCharacteristic) {
-      // if (!pCharacteristic->getUUID().equals(BLEUUID::fromString(CHARACTERISTIC_UUID_CLEAR))) {
-      //  Serial.println("UUID Mistake!");
-      //}
-      std::string rxValue = pCharacteristic->getValue();
-      if (rxValue.length() >= 4) {
-        unsigned char r = rxValue[0];
-        unsigned char g = rxValue[1];
-        unsigned char b = rxValue[2];
-        unsigned char s = rxValue[3];
-        if (s == lastClearSeq) {
-          Serial.println("Repeated clear received");
-          return;
-        } else {
-          lastClearSeq = s;
-        }
-        Serial.print("[fill]=[");Serial.print(r);Serial.print(",");Serial.print(g);Serial.print(",");Serial.print(b);Serial.print("], totalBytes=");Serial.println(rxValue.length());
-        for (int x = 0; x < 16; x++) {
-          for (int y = 0; y < 16; y++) {
-            EEPROM.write((x*16+y)*3+0, r);
-            EEPROM.write((x*16+y)*3+1, g);
-            EEPROM.write((x*16+y)*3+2, b);
-          }
-        }
-        EEPROM.commit();
-        drawFromFlash();
+  int seq = -1;
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    // if (!pCharacteristic->getUUID().equals(BLEUUID::fromString(CHARACTERISTIC_UUID_CLEAR))) {
+    //  Serial.println("UUID Mistake!");
+    //}
+    std::string rxValue = pCharacteristic->getValue();
+    if (rxValue.length() >= 4) {
+      unsigned char r = rxValue[0];
+      unsigned char g = rxValue[1];
+      unsigned char b = rxValue[2];
+      unsigned char s = rxValue[3];
+      if (s == seq) {
+        Serial.println("Repeated msg received: clear");
+        return;
+      } else {
+        seq = s;
       }
+      Serial.print("[fill]=[");Serial.print(r);Serial.print(",");Serial.print(g);Serial.print(",");Serial.print(b);Serial.print("], totalBytes=");Serial.println(rxValue.length());
+      for (int x = 0; x < 16; x++) {
+        for (int y = 0; y < 16; y++) {
+          EEPROM.write((x*16+y)*3+0, r);
+          EEPROM.write((x*16+y)*3+1, g);
+          EEPROM.write((x*16+y)*3+2, b);
+        }
+      }
+      EEPROM.commit();
+      drawFromFlash();
     }
+  }
 };
 
 void setup() { 
